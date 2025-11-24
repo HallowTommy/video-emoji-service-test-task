@@ -20,4 +20,3 @@
 - правит `.env`,
 - запускает `run.bat` / `run.sh`,
 - и может сразу тестить фронт + бота.
-::contentReference[oaicite:0]{index=0}
