@@ -2,10 +2,12 @@ import os
 import tempfile
 import subprocess
 import mimetypes
+import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 app = FastAPI()
 
@@ -16,12 +18,6 @@ def health():
 
 
 def _detect_extension(upload: UploadFile) -> str:
-    """
-    Определяем расширение исходного файла:
-    - сначала по имени файла,
-    - потом по content_type,
-    - по умолчанию .mp4
-    """
     # из имени файла
     ext = Path(upload.filename or "").suffix.lower()
     if ext:
@@ -37,11 +33,6 @@ def _detect_extension(upload: UploadFile) -> str:
 
 
 def _is_video(upload: UploadFile) -> bool:
-    """
-    Проверяем, что это видео:
-    - по content_type,
-    - либо по расширению файла.
-    """
     if upload.content_type and upload.content_type.startswith("video/"):
         return True
 
@@ -56,57 +47,62 @@ def _is_video(upload: UploadFile) -> bool:
 
 @app.post("/api/add-emoji")
 async def add_emoji(file: UploadFile = File(...)):
-    # валидируем, что это именно видео, а не .txt и т.п.
     if not _is_video(file):
         raise HTTPException(status_code=400, detail="Only video files are allowed")
 
     ext = _detect_extension(file)
     media_type = file.content_type or "video/mp4"
 
-    # создаём временную директорию, всё в ней удалится автоматически
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, f"input{ext}")
-        output_path = os.path.join(tmpdir, f"output{ext}")
+    # создаём временную директорию, НО теперь сами её удалим позже
+    tmpdir = tempfile.mkdtemp()
+    input_path = os.path.join(tmpdir, f"input{ext}")
+    output_path = os.path.join(tmpdir, f"output{ext}")
 
-        # сохраняем входной файл
-        with open(input_path, "wb") as f:
-            f.write(await file.read())
+    # сохраняем входной файл
+    with open(input_path, "wb") as f:
+        f.write(await file.read())
 
-        # команда ffmpeg как список аргументов
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            input_path,
-            "-vf",
-            (
-                "drawtext=text='😀':"
-                "fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                "fontsize=72:"
-                "x=(w-text_w)/2:y=(h-text_h)/2:"
-                "fontcolor=white"
-            ),
-            "-codec:a",
-            "copy",
-            output_path,
-        ]
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vf",
+        (
+            "drawtext=text='😀':"
+            "fontsize=72:"
+            "x=(w-text_w)/2:y=(h-text_h)/2:"
+            "fontcolor=white"
+        ),
+        "-codec:a",
+        "copy",
+        output_path,
+    ]
 
-        try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except subprocess.CalledProcessError as e:
-            # В ЛОГАХ КОНТЕЙНЕРА БУДЕТ ПОЛНЫЙ ТЕКСТ ОШИБКИ FFMPEG
-            print("FFMPEG ERROR:", e.stderr.decode(errors="ignore"))
-            raise HTTPException(status_code=500, detail="ffmpeg processing error")
-
-
-        # отдаём файл клиенту в том же формате (расширение/тип)
-        return FileResponse(
-            output_path,
-            media_type=media_type,
-            filename=f"output{ext}",
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
+    except subprocess.CalledProcessError as e:
+        print("FFMPEG ERROR:", e.stderr.decode(errors="ignore"))
+        # подчистим директорию, если ffmpeg упал
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="ffmpeg processing error")
+
+    if not os.path.exists(output_path):
+        # на всякий случай — если ffmpeg не создал файл
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="output file was not created")
+
+    # фоновая задача удалит временную папку, когда ответ будет отправлен
+    background = BackgroundTask(shutil.rmtree, tmpdir, ignore_errors=True)
+
+    return FileResponse(
+        output_path,
+        media_type=media_type,
+        filename=f"output{ext}",
+        background=background,
+    )
