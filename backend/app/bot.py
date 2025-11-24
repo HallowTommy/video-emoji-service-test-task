@@ -1,6 +1,7 @@
 import os
 import asyncio
 import tempfile
+
 import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
@@ -9,7 +10,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
 if not BOT_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+  raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
 
 
 bot = Bot(BOT_TOKEN)
@@ -45,10 +46,15 @@ async def handle_video(message: Message):
                     filename="video.mp4",
                     content_type="video/mp4",
                 )
-                async with session.post(f"{BACKEND_URL}/api/add-emoji", data=form) as resp:
+                async with session.post(
+                    f"{BACKEND_URL}/api/add-emoji",
+                    data=form,
+                ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
-                        await message.answer(f"Ошибка при обработке видео 😕\n{resp.status}: {text}")
+                        await message.answer(
+                            f"Ошибка при обработке видео 😕\n{resp.status}: {text}"
+                        )
                         return
                     tmp_out.write(await resp.read())
                     tmp_out.flush()
@@ -58,7 +64,7 @@ async def handle_video(message: Message):
 
 
 async def main():
-    await dp.start_polling(bot)  # noqa
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
