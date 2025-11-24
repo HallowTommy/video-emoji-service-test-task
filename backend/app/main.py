@@ -92,14 +92,17 @@ async def add_emoji(file: UploadFile = File(...)):
         ]
 
         try:
-            subprocess.run(
+            result = subprocess.run(
                 cmd,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            # В ЛОГАХ КОНТЕЙНЕРА БУДЕТ ПОЛНЫЙ ТЕКСТ ОШИБКИ FFMPEG
+            print("FFMPEG ERROR:", e.stderr.decode(errors="ignore"))
             raise HTTPException(status_code=500, detail="ffmpeg processing error")
+
 
         # отдаём файл клиенту в том же формате (расширение/тип)
         return FileResponse(
